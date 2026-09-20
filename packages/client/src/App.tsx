@@ -1,24 +1,34 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DecodeIssue, FloatSpan } from '@jacquard/shared';
+import type { DecodeIssue, DiffCell, FloatSpan } from '@jacquard/shared';
 import {
   MAX_FLOAT_DEFAULT,
   MAX_FLOAT_MAX,
   MAX_FLOAT_MIN,
   checkFloats,
+  compareCandidate,
   findMinRepeatUnit,
 } from '@jacquard/shared';
 import { api } from './api.js';
 import GridEditor from './GridEditor.js';
 import CommandEditor from './CommandEditor.js';
 import RepeatPanel from './RepeatPanel.js';
+import DiffPanel from './DiffPanel.js';
 
 const SYMBOLS = ['A', 'B', 'C'];
 const DEFAULT_WIDTH = 12;
 const DEFAULT_HEIGHT = 8;
 
+/** 对版页网格的固定空占位（不参与该页的编辑/校验/浮线/花版叠加） */
+const EMPTY_ISSUE_MAP = new Map<number, string>();
+const EMPTY_ROWS: number[] = [];
+const EMPTY_FLOATS: FloatSpan[] = [];
+
 function makeGrid(width: number, height: number, fill = 'A'): string[][] {
   return Array.from({ length: height }, () => new Array(width).fill(fill));
 }
+
+/** 对版页网格为只读，绘制回调为空操作 */
+function noopPaint() {}
 
 /** 示例提花图案：交错菱形 */
 function makeSample(width: number, height: number): string[][] {
@@ -34,7 +44,7 @@ function makeSample(width: number, height: number): string[][] {
   return grid;
 }
 
-type Tab = 'grid' | 'command';
+type Tab = 'grid' | 'compare' | 'command';
 
 export default function App() {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -58,6 +68,43 @@ export default function App() {
   /** 浮线风险检查：最大浮线针数阈值与当前选中的风险条目 */
   const [maxFloat, setMaxFloat] = useState(MAX_FLOAT_DEFAULT);
   const [selectedFloat, setSelectedFloat] = useState<FloatSpan | null>(null);
+
+  /**
+   * 对版模式：候选口令（口令编辑区文本）→ 临时图案，与当前网格逐格比较。
+   * 纯函数实时重算——候选文本、当前网格、行宽/行数任一变化即重新对版；
+   * 只读比较，绝不回写网格；差异列恒为视觉坐标，不随偶数行镜像。
+   */
+  const compareResult = useMemo(
+    () =>
+      compareCandidate({
+        text: commandText,
+        width,
+        height,
+        grid,
+        symbols: SYMBOLS,
+      }),
+    [commandText, width, height, grid],
+  );
+
+  /** 对版状态是否被一键清除（清除后候选/网格再变化时自动恢复实时对版） */
+  const [compareCleared, setCompareCleared] = useState(false);
+  /** 侧栏当前定位的差异格 */
+  const [selectedDiff, setSelectedDiff] = useState<DiffCell | null>(null);
+
+  /** 候选文本或当前网格变化：对版结果实时重算，并解除“已清除”状态 */
+  useEffect(() => {
+    setCompareCleared(false);
+  }, [commandText, grid]);
+
+  /** 对版结果更新后，之前定位的差异格可能已不存在，清空选中态 */
+  useEffect(() => {
+    setSelectedDiff(null);
+  }, [compareResult]);
+
+  const clearCompare = useCallback(() => {
+    setCompareCleared(true);
+    setSelectedDiff(null);
+  }, []);
 
   /**
    * 浮线分析完全基于视觉坐标（不随偶数行镜像），纯函数实时重算：
@@ -296,6 +343,15 @@ export default function App() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === 'compare'}
+          className={tab === 'compare' ? 'tab active' : 'tab'}
+          onClick={() => switchTab('compare')}
+        >
+          对版
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === 'command'}
           className={tab === 'command' ? 'tab active' : 'tab'}
           onClick={() => switchTab('command')}
@@ -419,6 +475,61 @@ export default function App() {
               </div>
             </div>
           </>
+        ) : tab === 'compare' ? (
+          compareCleared ? (
+            <div className="compare-cleared">
+              <p>
+                对版状态已清除。修改候选口令或当前网格后会自动重新对版，
+                也可以立即恢复：
+              </p>
+              <button type="button" onClick={() => setCompareCleared(false)}>
+                重新对版
+              </button>
+            </div>
+          ) : (
+            <div className="compare-layout">
+              <div className="compare-grid">
+                <GridEditor
+                  width={width}
+                  height={height}
+                  grid={grid}
+                  rowIssueMap={EMPTY_ISSUE_MAP}
+                  appliedRows={EMPTY_ROWS}
+                  floatRisks={EMPTY_FLOATS}
+                  selectedFloat={null}
+                  repeatOverlay={null}
+                  diffCells={compareResult.cells}
+                  selectedDiff={selectedDiff}
+                  readOnly
+                  onPaint={noopPaint}
+                />
+                <div className="legend compare-legend">
+                  <span className="legend-item">
+                    <i className="swatch diff-add" /> 新增纹样（候选有、网格为底色
+                    A）
+                  </span>
+                  <span className="legend-item">
+                    <i className="swatch diff-miss" /> 缺失纹样（网格有、候选为底色
+                    A）
+                  </span>
+                  <span className="legend-item">
+                    <i className="swatch diff-rep" /> 颜色替换（两侧非底色且不同）
+                  </span>
+                  <span className="legend-item">
+                    角标为候选符号；差异列为视觉坐标，偶数行不镜像
+                  </span>
+                </div>
+              </div>
+              <DiffPanel
+                result={compareResult}
+                selected={selectedDiff}
+                onSelect={setSelectedDiff}
+                onClear={clearCompare}
+                onEditCommand={() => switchTab('command')}
+                hasCandidateText={commandText.trim() !== ''}
+              />
+            </div>
+          )
         ) : (
           <>
             <CommandEditor

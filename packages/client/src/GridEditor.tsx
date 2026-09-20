@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
-import type { FloatSpan } from '@jacquard/shared';
+import type { DiffCell, FloatSpan } from '@jacquard/shared';
 
 /** 循环花版单元边界叠加（视觉坐标相位） */
 export interface RepeatOverlay {
@@ -26,6 +26,12 @@ interface GridEditorProps {
   selectedFloat: FloatSpan | null;
   /** 循环花版单元边界叠加；null 表示不绘制 */
   repeatOverlay: RepeatOverlay | null;
+  /** 对版差异格（视觉坐标）；缺省/空数组表示不叠加 */
+  diffCells?: DiffCell[];
+  /** 对版侧栏选中的差异格（定位高亮） */
+  selectedDiff?: DiffCell | null;
+  /** 只读模式（对版页）：禁止绘制 */
+  readOnly?: boolean;
   onPaint: (row: number, col: number) => void;
 }
 
@@ -50,6 +56,7 @@ interface FloatMark {
  * 偶数行行首用 ← 标注实际编织方向，但该行绝不做视觉镜像。
  * 浮线风险同样按视觉坐标标注：起止列描边、区间下划红线，不随偶数行翻转。
  * 循环花版边界按单元周期与视觉坐标相位描线，同样不做镜像。
+ * 对版差异也按视觉坐标叠加：新增/缺失/替换描边，角标显示候选符号。
  */
 export default function GridEditor({
   width,
@@ -60,6 +67,9 @@ export default function GridEditor({
   floatRisks,
   selectedFloat,
   repeatOverlay,
+  diffCells,
+  selectedDiff,
+  readOnly = false,
   onPaint,
 }: GridEditorProps) {
   const painting = useRef(false);
@@ -87,6 +97,15 @@ export default function GridEditor({
     return marks;
   }, [floatRisks, selectedFloat]);
 
+  /** 格子（0 基 "r-c"）→ 对版差异；差异列恒为视觉坐标，不随偶数行镜像 */
+  const diffMarks = useMemo(() => {
+    const marks = new Map<string, DiffCell>();
+    for (const cell of diffCells ?? []) {
+      marks.set(`${cell.row - 1}-${cell.col - 1}`, cell);
+    }
+    return marks;
+  }, [diffCells]);
+
   /** 选中风险条目后，把该浮线起始列滚动到可视区域 */
   useEffect(() => {
     if (!selectedFloat) return;
@@ -96,12 +115,23 @@ export default function GridEditor({
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   }, [selectedFloat]);
 
+  /** 对版侧栏点击条目后，把首个差异格滚动到可视区域 */
+  useEffect(() => {
+    if (!selectedDiff) return;
+    const el = tableRef.current?.querySelector(
+      `[data-cell="${selectedDiff.row - 1}-${selectedDiff.col - 1}"]`,
+    );
+    el?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  }, [selectedDiff]);
+
   const rowClass = (r1: number) => {
     const classes: string[] = [];
     if (rowIssueMap.has(r1)) classes.push('row-error');
     if (appliedRows.includes(r1)) classes.push('row-applied');
     if (selectedFloat && selectedFloat.row === r1)
       classes.push('row-float-selected');
+    if (selectedDiff && selectedDiff.row === r1)
+      classes.push('row-diff-selected');
     return classes.join(' ');
   };
 
@@ -134,7 +164,7 @@ export default function GridEditor({
     <div className="grid-scroll">
       <table
         ref={tableRef}
-        className="grid-table"
+        className={`grid-table${readOnly ? ' readonly' : ''}`}
         onPointerDown={() => {
           painting.current = true;
         }}
@@ -171,26 +201,50 @@ export default function GridEditor({
                 {Array.from({ length: width }, (_, c) => {
                   const symbol = grid[r]?.[c] ?? '';
                   const mark = floatMarks.get(`${r}-${c}`);
+                  const diff = diffMarks.get(`${r}-${c}`);
                   const cellClasses = ['grid-cell', SYMBOL_CLASS[symbol] ?? ''];
                   if (mark) cellClasses.push('float-risk');
                   if (mark?.anchor) cellClasses.push('float-anchor');
                   if (mark?.selected) cellClasses.push('float-selected');
+                  if (diff) {
+                    cellClasses.push('diff-mark', `diff-${diff.kind}`);
+                    if (
+                      selectedDiff &&
+                      selectedDiff.row === diff.row &&
+                      selectedDiff.col === diff.col
+                    ) {
+                      cellClasses.push('diff-selected');
+                    }
+                  }
                   const baseTitle = `第 ${r1} 行 第 ${c + 1} 列（视觉坐标）`;
+                  const diffKindText =
+                    diff?.kind === 'added'
+                      ? '新增纹样'
+                      : diff?.kind === 'missing'
+                        ? '缺失纹样'
+                        : '颜色替换';
+                  const title = diff
+                    ? `${baseTitle}｜对版差异·${diffKindText}：当前 ${diff.gridSymbol} → 候选 ${diff.candidateSymbol}`
+                    : mark
+                      ? `${baseTitle}｜${mark.tip}`
+                      : baseTitle;
                   return (
                     <td key={c} className="grid-cell-td">
                       <button
                         type="button"
                         data-cell={`${r}-${c}`}
+                        data-cand={diff ? diff.candidateSymbol : undefined}
                         className={cellClasses.join(' ')}
                         style={repeatCellStyle(r, c, issue !== undefined)}
-                        title={mark ? `${baseTitle}｜${mark.tip}` : baseTitle}
+                        title={title}
                         onPointerDown={(e) => {
+                          if (readOnly) return;
                           e.preventDefault();
                           painting.current = true;
                           onPaint(r, c);
                         }}
                         onPointerEnter={() => {
-                          if (painting.current) onPaint(r, c);
+                          if (!readOnly && painting.current) onPaint(r, c);
                         }}
                       >
                         {symbol}

@@ -136,8 +136,9 @@ function parseRawLine(raw: string, line: number): ParsedLine {
 /**
  * 按编织方向把游程铺回“视觉坐标”的一行。
  * 偶数行第一个游程对应网格最右端，因此从右向左填充。
+ * 仅在针数恰好等于行宽时调用——欠针/溢出的行不允许用部分结果。
  */
-function placeRuns(runs: Run[], rowOneBased: number, width: number): string[] {
+export function placeRuns(runs: Run[], rowOneBased: number, width: number): string[] {
   const cells = new Array<string>(width).fill('');
   const ltr = isOddRow(rowOneBased);
   let cursor = ltr ? 0 : width - 1;
@@ -152,20 +153,44 @@ function placeRuns(runs: Run[], rowOneBased: number, width: number): string[] {
   return cells;
 }
 
+export interface AnalyzeRequest {
+  text: string;
+  width: number;
+  height: number;
+  /** 允许的符号集合（如 ['A','B','C']） */
+  symbols: string[];
+}
+
+/** 一条成功映射到图案行的口令的校验归宿 */
+export interface AnalyzedRow {
+  /** 目标图案行（1 基） */
+  row: number;
+  /** 口令文本行（1 基） */
+  line: number;
+  /** 校验通过（针数恰好等于行宽）时的游程；否则为 null */
+  runs: Run[] | null;
+  /** 校验失败原因（runs 为 null 时存在） */
+  issue: DecodeIssue | null;
+}
+
+export interface TextAnalysis {
+  /** 每个成功落行的口令行（含校验失败行），按文本顺序 */
+  rows: AnalyzedRow[];
+  /** 全部问题：行号冲突/越界等映射问题在前，逐行校验问题在后 */
+  issues: DecodeIssue[];
+}
+
 /**
- * 解析口令文本并回写网格。
- * 仅当某行针数恰好等于行宽时回写该行；任何错误行保留 fallback 原图，
- * 并生成可定位的 issue（口令行号 / 图案行号 / 视觉列范围）。
+ * 解析口令文本并逐行校验（不回写、不比较，只做“文本 → 行”的归宿判定）。
+ * decodeText（回写）与 compareCandidate（对版）共用同一套规则：
+ * 行号映射、语法、符号集合、针数必须恰好等于行宽。
  */
-export function decodeText(req: DecodeRequest): DecodeResponse {
-  const { text, width, height, fallback, symbols } = req;
+export function analyzeText(req: AnalyzeRequest): TextAnalysis {
+  const { text, width, height, symbols } = req;
   const allowed = new Set(symbols.map((s) => s.toUpperCase()));
   const rawLines = text.split(/\r?\n/);
   const issues: DecodeIssue[] = [];
-  const appliedRows: number[] = [];
-
-  // 以原图为基底：合法行覆盖，非法行自然保留
-  const grid: string[][] = fallback.map((row) => [...row]);
+  const rows: AnalyzedRow[] = [];
 
   const parsed = rawLines.map((raw, i) => parseRawLine(raw, i + 1));
 
@@ -177,7 +202,6 @@ export function decodeText(req: DecodeRequest): DecodeResponse {
    * - 两条口令指向同一图案行时报冲突（含重复显式行号、显式与隐式撞行）。
    */
   const rowMap = new Map<number, { line: number; explicit: boolean }>();
-  const issues2: DecodeIssue[] = [];
 
   for (const p of parsed) {
     if (p.empty) continue;
@@ -185,7 +209,7 @@ export function decodeText(req: DecodeRequest): DecodeResponse {
     const existing = rowMap.get(target);
     if (existing) {
       const bothExplicit = existing.explicit && p.explicitRow !== null;
-      issues2.push({
+      issues.push({
         line: p.line,
         row: target,
         code: 'DUPLICATE_ROW',
@@ -196,7 +220,7 @@ export function decodeText(req: DecodeRequest): DecodeResponse {
       continue;
     }
     if (target < 1 || target > height) {
-      issues2.push({
+      issues.push({
         line: p.line,
         row: p.explicitRow !== null ? target : null,
         code: 'ROW_OUT_OF_RANGE',
@@ -209,9 +233,8 @@ export function decodeText(req: DecodeRequest): DecodeResponse {
     }
     rowMap.set(target, { line: p.line, explicit: p.explicitRow !== null });
   }
-  for (const i of issues2) issues.push(i);
 
-  // 第二遍：逐行解析（行号冲突/越界的文本行不在 rowMap 中，跳过）
+  // 第二遍：逐行校验（行号冲突/越界的文本行不在 rowMap 中，跳过）
   for (const p of parsed) {
     if (p.empty) continue;
     const mapped = rowMap.get(p.explicitRow ?? p.line);
@@ -220,33 +243,36 @@ export function decodeText(req: DecodeRequest): DecodeResponse {
 
     // 语法错误
     if (p.runs === null) {
-      if (p.badToken !== undefined) {
-        issues.push({
-          line: p.line,
-          row: rowOneBased,
-          code: 'BAD_TOKEN',
-          message: `第 ${p.line} 行存在无法识别的片段“${p.badToken}”（格式应为 符号+针数，如 A4），整行保留原图`,
-        });
-      } else {
-        issues.push({
-          line: p.line,
-          row: rowOneBased,
-          code: 'EMPTY_RUNS',
-          message: `第 ${p.line} 行只有行号、没有游程，整行保留原图`,
-        });
-      }
+      const issue: DecodeIssue =
+        p.badToken !== undefined
+          ? {
+              line: p.line,
+              row: rowOneBased,
+              code: 'BAD_TOKEN',
+              message: `第 ${p.line} 行存在无法识别的片段“${p.badToken}”（格式应为 符号+针数，如 A4），整行保留原图`,
+            }
+          : {
+              line: p.line,
+              row: rowOneBased,
+              code: 'EMPTY_RUNS',
+              message: `第 ${p.line} 行只有行号、没有游程，整行保留原图`,
+            };
+      issues.push(issue);
+      rows.push({ row: rowOneBased, line: p.line, runs: null, issue });
       continue;
     }
 
     // 符号集合校验
     const badSymbolRun = p.runs.find((r) => !allowed.has(r.symbol));
     if (badSymbolRun) {
-      issues.push({
+      const issue: DecodeIssue = {
         line: p.line,
         row: rowOneBased,
         code: 'UNKNOWN_SYMBOL',
         message: `第 ${p.line} 行出现未启用的符号“${badSymbolRun.symbol}”（当前符号：${symbols.join('/')}），整行保留原图`,
-      });
+      };
+      issues.push(issue);
+      rows.push({ row: rowOneBased, line: p.line, runs: null, issue });
       continue;
     }
 
@@ -284,26 +310,49 @@ export function decodeText(req: DecodeRequest): DecodeResponse {
         detail =
           `共 ${total} 针，比行宽少 ${width - total} 针（应恰好 ${width} 针），${gapCols}`;
       }
-      issues.push({
+      const issue: DecodeIssue = {
         line: p.line,
         row: rowOneBased,
         code: 'COUNT_MISMATCH',
         message: `第 ${rowOneBased} 行（口令第 ${p.line} 行）针数不符：${detail}，整行保留原图`,
         actualCount: total,
         expectedCount: width,
-      });
+      };
+      issues.push(issue);
+      rows.push({ row: rowOneBased, line: p.line, runs: null, issue });
       continue;
     }
 
-    // 针数恰好等于行宽：回写
-    grid[rowOneBased - 1] = placeRuns(p.runs, rowOneBased, width);
-    appliedRows.push(rowOneBased);
+    // 针数恰好等于行宽：校验通过
+    rows.push({ row: rowOneBased, line: p.line, runs: p.runs, issue: null });
+  }
+
+  return { rows, issues };
+}
+
+/**
+ * 解析口令文本并回写网格。
+ * 仅当某行针数恰好等于行宽时回写该行；任何错误行保留 fallback 原图，
+ * 并生成可定位的 issue（口令行号 / 图案行号 / 视觉列范围）。
+ */
+export function decodeText(req: DecodeRequest): DecodeResponse {
+  const { text, width, height, fallback, symbols } = req;
+  const analysis = analyzeText({ text, width, height, symbols });
+
+  // 以原图为基底：合法行覆盖，非法行自然保留
+  const grid: string[][] = fallback.map((row) => [...row]);
+  const appliedRows: number[] = [];
+
+  for (const r of analysis.rows) {
+    if (r.runs === null) continue;
+    grid[r.row - 1] = placeRuns(r.runs, r.row, width);
+    appliedRows.push(r.row);
   }
 
   return {
     grid,
-    issues,
+    issues: analysis.issues,
     appliedRows,
-    ok: issues.length === 0,
+    ok: analysis.issues.length === 0,
   };
 }

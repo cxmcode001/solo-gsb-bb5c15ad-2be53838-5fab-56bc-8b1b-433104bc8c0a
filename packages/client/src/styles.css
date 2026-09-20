@@ -734,6 +734,313 @@ tr.row-float-selected .row-head .row-no {
   background: var(--sym-c-bg);
 }
 
+/* ---------- 对版 ---------- */
+:root {
+  --diff-added: #16a34a;
+  --diff-missing: #dc2626;
+  --diff-replaced: #d97706;
+}
+
+.compare-layout {
+  display: flex;
+  gap: 16px;
+  align-items: flex-start;
+}
+
+.compare-grid {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.compare-legend {
+  margin-top: 12px;
+}
+
+.compare-cleared {
+  padding: 28px 16px;
+  text-align: center;
+  color: var(--muted);
+}
+
+.compare-cleared p {
+  margin: 0 0 12px;
+}
+
+.compare-cleared button {
+  padding: 8px 18px;
+  border: 1px solid var(--primary);
+  border-radius: 7px;
+  background: #fff;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+}
+
+.compare-cleared button:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+/* 只读网格：对版页禁止绘制 */
+.grid-table.readonly .grid-cell {
+  cursor: default;
+}
+
+.grid-table.readonly .grid-cell:active {
+  transform: none;
+}
+
+/* 差异格：按类别描边（视觉坐标，不随偶数行镜像） */
+.grid-cell.diff-mark {
+  position: relative;
+}
+.grid-cell.diff-added {
+  box-shadow: inset 0 0 0 2px var(--diff-added);
+}
+.grid-cell.diff-missing {
+  box-shadow: inset 0 0 0 2px var(--diff-missing);
+}
+.grid-cell.diff-replaced {
+  box-shadow: inset 0 0 0 2px var(--diff-replaced);
+}
+
+/* 差异格角标：候选符号 */
+.grid-cell.diff-mark::after {
+  content: attr(data-cand);
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 2px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  pointer-events: none;
+}
+.grid-cell.diff-added::after {
+  background: var(--diff-added);
+}
+.grid-cell.diff-missing::after {
+  background: var(--diff-missing);
+}
+.grid-cell.diff-replaced::after {
+  background: var(--diff-replaced);
+}
+
+/* 侧栏定位选中的差异格 */
+.grid-cell.diff-selected {
+  outline: 3px solid var(--primary);
+  outline-offset: -3px;
+}
+
+tr.row-diff-selected .row-head .row-no {
+  color: var(--primary);
+  font-weight: 700;
+}
+
+/* 侧栏 */
+.diff-panel {
+  flex: 0 0 300px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfe;
+  display: flex;
+  flex-direction: column;
+  max-height: 560px;
+}
+
+.diff-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.diff-title {
+  font-weight: 700;
+}
+
+.diff-clear {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+
+.diff-clear:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.diff-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.diff-count {
+  font-style: normal;
+  font-weight: 700;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+.diff-count.added {
+  color: var(--diff-added);
+}
+.diff-count.missing {
+  color: var(--diff-missing);
+}
+.diff-count.replaced {
+  color: var(--diff-replaced);
+}
+
+.diff-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diff-empty {
+  margin: 10px 12px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+
+.diff-goto {
+  display: block;
+  margin-top: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.diff-goto:hover {
+  background: var(--primary);
+  color: #fff;
+}
+
+.diff-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.diff-item {
+  width: 100%;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  border: none;
+  background: transparent;
+  padding: 5px 6px;
+  border-radius: 6px;
+  font: inherit;
+  text-align: left;
+}
+
+button.diff-item {
+  cursor: pointer;
+}
+
+button.diff-item:hover {
+  background: #eef3fb;
+}
+
+.diff-item.selected {
+  background: #e3edff;
+  box-shadow: inset 3px 0 0 var(--primary);
+}
+
+.diff-loc {
+  flex: none;
+  font-weight: 700;
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.diff-item-diff .diff-loc {
+  color: var(--primary);
+}
+
+.diff-item-same .diff-loc,
+.diff-item-same .diff-counts {
+  color: var(--ok-border);
+}
+
+.diff-item-invalid .diff-loc,
+.diff-item-invalid .diff-counts,
+.diff-item-missing .diff-loc,
+.diff-item-missing .diff-counts {
+  color: var(--muted);
+}
+
+.diff-counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.diff-first {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.diff-mapping-issues {
+  padding: 8px 12px;
+  border-top: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.diff-mapping-issue {
+  display: block;
+}
+
+/* 对版图例色块 */
+.swatch.diff-add {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--diff-added);
+}
+.swatch.diff-miss {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--diff-missing);
+}
+.swatch.diff-rep {
+  background: #fff;
+  box-shadow: inset 0 0 0 2px var(--diff-replaced);
+}
+
 .app-footer {
   margin-top: 18px;
   text-align: center;

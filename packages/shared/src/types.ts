@@ -79,6 +79,78 @@ export interface DecodeResponse {
 }
 
 /**
+ * 对版（候选口令 ↔ 当前网格）差异类别。
+ * 以底色符号（默认 A）为基准：
+ * - added：候选在该格织入纹样，当前网格为底色
+ * - missing：当前网格有纹样，候选在该格回到底色
+ * - replaced：两侧均为非底色但符号不同
+ */
+export type DiffKind = 'added' | 'missing' | 'replaced';
+
+/** 一个差异格，全部使用视觉坐标（1 基），绝不随偶数行镜像 */
+export interface DiffCell {
+  /** 1 基行号 */
+  row: number;
+  /** 1 基视觉列号 */
+  col: number;
+  kind: DiffKind;
+  /** 当前网格符号 */
+  gridSymbol: string;
+  /** 候选临时图案符号 */
+  candidateSymbol: string;
+}
+
+/**
+ * 对版行状态：
+ * - same：可比较且与候选完全一致
+ * - diff：可比较，存在差异
+ * - invalid：候选行存在但针数错误/无法解析，整行不参与差异
+ * - missing：该行没有对应的候选口令，无可比较
+ */
+export type DiffRowStatus = 'same' | 'diff' | 'invalid' | 'missing';
+
+/** 侧栏按行汇总的一条记录 */
+export interface DiffRowSummary {
+  /** 1 基行号 */
+  row: number;
+  status: DiffRowStatus;
+  added: number;
+  missing: number;
+  replaced: number;
+  /** 首个差异所在的 1 基视觉列；无差异或不可比较时为 null */
+  firstDiffCol: number | null;
+  /** 不可比较原因（status 为 invalid / missing 时存在） */
+  reason: string | null;
+  /** 候选口令所在的 1 基文本行；无候选行时为 null */
+  line: number | null;
+}
+
+export interface CompareRequest {
+  text: string;
+  width: number;
+  height: number;
+  /** 当前网格：仅作对照基准，绝不回写 */
+  grid: string[][];
+  /** 允许的符号集合（如 ['A','B','C']） */
+  symbols: string[];
+  /** 底色符号，默认 'A' */
+  baseSymbol?: string;
+}
+
+export interface CompareResult {
+  /** 按行汇总（1..height 每行一条） */
+  rows: DiffRowSummary[];
+  /** 全部差异格（视觉坐标，行 → 列升序） */
+  cells: DiffCell[];
+  /** 全图合计 */
+  totals: { added: number; missing: number; replaced: number };
+  /** 可比较行数（same + diff） */
+  comparableRows: number;
+  /** 候选口令的解析问题（与 decodeText 同一套规则） */
+  issues: DecodeIssue[];
+}
+
+/**
  * 一段浮线：同一行内某种颜色相邻两次落针之间、被同色针脚两端夹住的区间。
  * 全部使用视觉坐标（1 基），与奇偶行编织方向无关。
  */
