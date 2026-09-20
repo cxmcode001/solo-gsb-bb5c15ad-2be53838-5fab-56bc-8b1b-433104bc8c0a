@@ -79,7 +79,7 @@ const SEPARATOR = /[\s,，、;；]+/;
 const COMMENT_RE = /[#＃].*$/;
 const ARROW_RE = /[→←><]|->|<-/g;
 
-interface ParsedLine {
+export interface ParsedLine {
   line: number;
   explicitRow: number | null;
   runs: Run[] | null; // null = 本行存在语法错误
@@ -88,7 +88,7 @@ interface ParsedLine {
   empty: boolean;
 }
 
-function parseRawLine(raw: string, line: number): ParsedLine {
+export function parseRawLine(raw: string, line: number): ParsedLine {
   const stripped = raw.replace(COMMENT_RE, '').replace(ARROW_RE, ' ').trim();
   if (stripped === '') {
     return { line, explicitRow: null, runs: null, empty: true };
@@ -136,8 +136,9 @@ function parseRawLine(raw: string, line: number): ParsedLine {
 /**
  * 按编织方向把游程铺回“视觉坐标”的一行。
  * 偶数行第一个游程对应网格最右端，因此从右向左填充。
+ * 视觉坐标不做任何镜像——偶数行只是填充顺序相反。
  */
-function placeRuns(runs: Run[], rowOneBased: number, width: number): string[] {
+export function placeRuns(runs: Run[], rowOneBased: number, width: number): string[] {
   const cells = new Array<string>(width).fill('');
   const ltr = isOddRow(rowOneBased);
   let cursor = ltr ? 0 : width - 1;

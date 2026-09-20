@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import type { DecodeIssue, FloatSpan } from '@jacquard/shared';
+import type { DecodeIssue, FloatSpan, ProofDiff, ProofRowSummary } from '@jacquard/shared';
 import {
   MAX_FLOAT_DEFAULT,
   MAX_FLOAT_MAX,
   MAX_FLOAT_MIN,
   checkFloats,
   findMinRepeatUnit,
+  proofread,
 } from '@jacquard/shared';
 import { api } from './api.js';
 import GridEditor from './GridEditor.js';
 import CommandEditor from './CommandEditor.js';
 import RepeatPanel from './RepeatPanel.js';
+import ProofPanel from './ProofPanel.js';
 
 const SYMBOLS = ['A', 'B', 'C'];
 const DEFAULT_WIDTH = 12;
@@ -34,7 +36,7 @@ function makeSample(width: number, height: number): string[][] {
   return grid;
 }
 
-type Tab = 'grid' | 'command';
+type Tab = 'grid' | 'proof' | 'command';
 
 export default function App() {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -86,6 +88,71 @@ export default function App() {
   useEffect(() => {
     setRepeatOffset({ r: 0, c: 0 });
   }, [repeatResult.unitRows, repeatResult.unitCols]);
+
+  /**
+   * 对版模式：编辑区中的候选口令只解析为临时图案参与逐格比较，绝不回写网格。
+   * 纯函数实时重算——候选文本或当前网格（绘制/改尺寸/校验回写）变化即重算。
+   */
+  const [proofText, setProofText] = useState('');
+  const [selectedProofRow, setSelectedProofRow] = useState<number | null>(null);
+  const [selectedProofDiff, setSelectedProofDiff] = useState<ProofDiff | null>(null);
+
+  const proofResult = useMemo(
+    () =>
+      proofread({
+        text: proofText,
+        grid,
+        width,
+        height,
+        symbols: SYMBOLS,
+        baseSymbol: 'A',
+      }),
+    [proofText, grid, width, height],
+  );
+
+  /** 逐格标注 Map（"r-c" 0 基视觉坐标 → 差异）；偶数行不镜像 */
+  const proofMarks = useMemo(() => {
+    const m = new Map<string, { diff: ProofDiff; selected: boolean }>();
+    for (const d of proofResult.diffs) {
+      m.set(`${d.row - 1}-${d.col - 1}`, {
+        diff: d,
+        selected:
+          selectedProofDiff !== null &&
+          selectedProofDiff.row === d.row &&
+          selectedProofDiff.col === d.col,
+      });
+    }
+    return m;
+  }, [proofResult.diffs, selectedProofDiff]);
+
+  /** 不可比较行集合（针数错误/无法解析/缺少候选，整行不用部分结果） */
+  const proofIncomparableRows = useMemo(() => {
+    const s = new Set<number>();
+    for (const r of proofResult.rows) {
+      if (!r.comparable) s.add(r.row);
+    }
+    return s;
+  }, [proofResult.rows]);
+
+  /** 候选文本或网格变化后，旧的选中定位可能已失效，清空选中态 */
+  useEffect(() => {
+    setSelectedProofRow(null);
+    setSelectedProofDiff(null);
+  }, [proofText, grid, width, height]);
+
+  const onSelectProofRow = useCallback((summary: ProofRowSummary) => {
+    if (!summary.firstDiff) return;
+    setSelectedProofRow(summary.row);
+    setSelectedProofDiff(summary.firstDiff);
+  }, []);
+
+  /** 一键清除对版状态：退出对版页并清空候选文本与定位选中（不触碰当前网格） */
+  const clearProof = useCallback(() => {
+    setProofText('');
+    setSelectedProofRow(null);
+    setSelectedProofDiff(null);
+    setTab('grid');
+  }, []);
 
   /** 口令文本是否与当前网格一致（未手工修改） */
   const syncedText = useRef<string | null>(null);
@@ -296,6 +363,15 @@ export default function App() {
         <button
           type="button"
           role="tab"
+          aria-selected={tab === 'proof'}
+          className={tab === 'proof' ? 'tab active' : 'tab'}
+          onClick={() => setTab('proof')}
+        >
+          对版
+        </button>
+        <button
+          type="button"
+          role="tab"
           aria-selected={tab === 'command'}
           className={tab === 'command' ? 'tab active' : 'tab'}
           onClick={() => switchTab('command')}
@@ -417,6 +493,80 @@ export default function App() {
                   <i className="swatch rep" /> 循环花版单元边界（视觉坐标）
                 </span>
               </div>
+            </div>
+          </>
+        ) : tab === 'proof' ? (
+          <>
+            <div className="proof-editor-bar">
+              <label className="proof-editor-label" htmlFor="proof-text">
+                候选口令（解析为临时图案对版，<strong>不会回写</strong>当前网格）
+              </label>
+              <div className="proof-editor-shell">
+                <textarea
+                  id="proof-text"
+                  className="proof-textarea"
+                  value={proofText}
+                  spellCheck={false}
+                  wrap="off"
+                  placeholder={
+                    '粘贴或输入待核对的游程口令，每行对应一个图案行，例如：\n01 → A2 B4 A2\n02 ← A2 B4 A2\n\n省略行号时按文本顺序对应；偶数行仍按 ← 解码，差异列按视觉坐标比较、绝不镜像。'
+                  }
+                  onChange={(e) => setProofText(e.target.value)}
+                />
+              </div>
+            </div>
+
+            <div className="proof-layout">
+              <div className="proof-grid-col">
+                <div className="proof-grid-head hint">
+                  以 A 为底色叠加：绿色描边为新增纹样、红色为缺失纹样、琥珀色为颜色替换；
+                  “?”行针数错误或无法解析，整行不可比较。
+                </div>
+                <GridEditor
+                  width={width}
+                  height={height}
+                  grid={grid}
+                  rowIssueMap={new Map()}
+                  appliedRows={[]}
+                  floatRisks={[]}
+                  selectedFloat={null}
+                  repeatOverlay={null}
+                  proofMarks={proofMarks}
+                  proofIncomparableRows={proofIncomparableRows}
+                  selectedProofDiff={selectedProofDiff}
+                  readOnly
+                  onPaint={() => undefined}
+                />
+              </div>
+              <ProofPanel
+                proof={proofResult}
+                selectedRow={selectedProofRow}
+                onSelectRow={onSelectProofRow}
+              />
+            </div>
+
+            <div className="action-bar">
+              <button type="button" onClick={clearProof}>
+                清除对版状态
+              </button>
+              {commandText.trim() !== '' && (
+                <button
+                  type="button"
+                  onClick={() => setProofText(commandText)}
+                  title="把“游程口令”页当前编辑的文本填入候选区继续对版"
+                >
+                  填入游程口令页文本
+                </button>
+              )}
+              {proofText.trim() !== '' && (
+                <button type="button" onClick={() => setProofText('')}>
+                  清空候选文本
+                </button>
+              )}
+              <span className="hint">
+                候选文本或当前网格变化后实时重算；针数错误/无法解析/缺少候选的行列为不可比较，
+                不使用部分结果。
+              </span>
             </div>
           </>
         ) : (

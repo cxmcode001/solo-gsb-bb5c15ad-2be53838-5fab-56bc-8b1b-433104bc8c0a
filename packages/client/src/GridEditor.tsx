@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef } from 'react';
 import type { CSSProperties } from 'react';
-import type { FloatSpan } from '@jacquard/shared';
+import type { FloatSpan, ProofDiff } from '@jacquard/shared';
 
 /** 循环花版单元边界叠加（视觉坐标相位） */
 export interface RepeatOverlay {
@@ -12,6 +12,13 @@ export interface RepeatOverlay {
   rowOffset: number;
   /** 列相位偏移（0..colPeriod-1，视觉坐标） */
   colOffset: number;
+}
+
+/** 对版模式：单格叠加标注（视觉坐标，偶数行不镜像） */
+export interface ProofCellMark {
+  diff: ProofDiff;
+  /** 是否为侧栏当前选中差异所在格 */
+  selected: boolean;
 }
 
 interface GridEditorProps {
@@ -26,6 +33,14 @@ interface GridEditorProps {
   selectedFloat: FloatSpan | null;
   /** 循环花版单元边界叠加；null 表示不绘制 */
   repeatOverlay: RepeatOverlay | null;
+  /** 对版模式：逐格差异标注；null 表示普通编辑模式 */
+  proofMarks?: Map<string, ProofCellMark> | null;
+  /** 对版模式：不可比较的 1 基行号集合（针数错误/无法解析/缺少候选） */
+  proofIncomparableRows?: Set<number> | null;
+  /** 对版模式：侧栏选中的差异（滚动定位到该格） */
+  selectedProofDiff?: ProofDiff | null;
+  /** 只读（对版模式下禁用绘制） */
+  readOnly?: boolean;
   onPaint: (row: number, col: number) => void;
 }
 
@@ -60,6 +75,10 @@ export default function GridEditor({
   floatRisks,
   selectedFloat,
   repeatOverlay,
+  proofMarks = null,
+  proofIncomparableRows = null,
+  selectedProofDiff = null,
+  readOnly = false,
   onPaint,
 }: GridEditorProps) {
   const painting = useRef(false);
@@ -96,12 +115,23 @@ export default function GridEditor({
     el?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   }, [selectedFloat]);
 
+  /** 对版：点击侧栏条目后，把首个差异格滚动到可视区域 */
+  useEffect(() => {
+    if (!selectedProofDiff) return;
+    const el = tableRef.current?.querySelector(
+      `[data-cell="${selectedProofDiff.row - 1}-${selectedProofDiff.col - 1}"]`,
+    );
+    el?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+  }, [selectedProofDiff]);
+
   const rowClass = (r1: number) => {
     const classes: string[] = [];
     if (rowIssueMap.has(r1)) classes.push('row-error');
     if (appliedRows.includes(r1)) classes.push('row-applied');
     if (selectedFloat && selectedFloat.row === r1)
       classes.push('row-float-selected');
+    if (proofIncomparableRows?.has(r1)) classes.push('row-proof-incomparable');
+    if (selectedProofDiff?.row === r1) classes.push('row-proof-selected');
     return classes.join(' ');
   };
 
@@ -171,11 +201,28 @@ export default function GridEditor({
                 {Array.from({ length: width }, (_, c) => {
                   const symbol = grid[r]?.[c] ?? '';
                   const mark = floatMarks.get(`${r}-${c}`);
+                  const proofMark = proofMarks?.get(`${r}-${c}`) ?? null;
                   const cellClasses = ['grid-cell', SYMBOL_CLASS[symbol] ?? ''];
                   if (mark) cellClasses.push('float-risk');
                   if (mark?.anchor) cellClasses.push('float-anchor');
                   if (mark?.selected) cellClasses.push('float-selected');
+                  if (proofMark) {
+                    cellClasses.push('proof-cell', `proof-${proofMark.diff.kind}`);
+                    if (proofMark.selected) cellClasses.push('proof-selected');
+                  }
                   const baseTitle = `第 ${r1} 行 第 ${c + 1} 列（视觉坐标）`;
+                  const proofTip = proofMark
+                    ? proofMark.diff.kind === 'added'
+                      ? `新增纹样：候选为 ${proofMark.diff.candidate}，当前为底色`
+                      : proofMark.diff.kind === 'missing'
+                        ? `缺失纹样：当前为 ${proofMark.diff.current}，候选为底色`
+                        : `颜色替换：当前 ${proofMark.diff.current} → 候选 ${proofMark.diff.candidate}`
+                    : null;
+                  const title = proofTip
+                    ? `${baseTitle}｜${proofTip}`
+                    : mark
+                      ? `${baseTitle}｜${mark.tip}`
+                      : baseTitle;
                   return (
                     <td key={c} className="grid-cell-td">
                       <button
@@ -183,17 +230,29 @@ export default function GridEditor({
                         data-cell={`${r}-${c}`}
                         className={cellClasses.join(' ')}
                         style={repeatCellStyle(r, c, issue !== undefined)}
-                        title={mark ? `${baseTitle}｜${mark.tip}` : baseTitle}
+                        title={title}
+                        aria-label={proofTip ? `${baseTitle}，${proofTip}` : undefined}
+                        disabled={readOnly}
                         onPointerDown={(e) => {
+                          if (readOnly) return;
                           e.preventDefault();
                           painting.current = true;
                           onPaint(r, c);
                         }}
                         onPointerEnter={() => {
-                          if (painting.current) onPaint(r, c);
+                          if (!readOnly && painting.current) onPaint(r, c);
                         }}
                       >
                         {symbol}
+                        {proofMark && (
+                          <span className="proof-badge" aria-hidden>
+                            {proofMark.diff.kind === 'added'
+                              ? '+'
+                              : proofMark.diff.kind === 'missing'
+                                ? '−'
+                                : '⇄'}
+                          </span>
+                        )}
                       </button>
                     </td>
                   );
@@ -201,6 +260,13 @@ export default function GridEditor({
                 {issue ? (
                   <th className="row-flag" title={issue}>
                     !
+                  </th>
+                ) : proofIncomparableRows?.has(r1) ? (
+                  <th
+                    className="row-flag row-flag-proof"
+                    title="候选行针数错误或无法解析，整行不可比较（不使用部分结果）"
+                  >
+                    ?
                   </th>
                 ) : (
                   <th className="row-flag row-flag-empty" />

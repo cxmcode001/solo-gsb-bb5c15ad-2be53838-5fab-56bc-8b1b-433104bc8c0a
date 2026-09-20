@@ -78,6 +78,74 @@ export interface DecodeResponse {
   ok: boolean;
 }
 
+/** 对版逐格差异类型（以 A 为底色判定） */
+export type ProofDiffType = 'added' | 'missing' | 'replaced';
+
+/** 对版：逐格差异（全部使用视觉坐标，1 基；偶数行不镜像） */
+export interface ProofDiff {
+  /** 1 基行号 */
+  row: number;
+  /** 1 基视觉列号（列 1 恒在最左，偶数行差异列绝不镜像） */
+  col: number;
+  kind: ProofDiffType;
+  /** 当前网格该格符号 */
+  current: string;
+  /** 候选图案该格符号 */
+  candidate: string;
+}
+
+/** 一行的对版汇总 */
+export interface ProofRowSummary {
+  /** 1 基行号 */
+  row: number;
+  /** 本行是否可比较（恰好一条合法且针数正确的候选行才可比较） */
+  comparable: boolean;
+  /** 不可比较或候选行解析失败时的原因（可比较时为 null） */
+  reason: string | null;
+  /** 对应用户口令文本中的物理行号（1 基），无法判定时为 null */
+  line: number | null;
+  added: number;
+  missing: number;
+  replaced: number;
+  /** 本行首个差异（列序最小），供点击条目定位 */
+  firstDiff: ProofDiff | null;
+  /** 本行是否完全一致（仅可比较行可能为 true） */
+  match: boolean;
+}
+
+export interface ProofRequest {
+  /** 编辑区中的候选口令文本（解析为临时图案，不回写网格） */
+  text: string;
+  /** 当前网格（仅作逐格比较基准，不会被修改） */
+  grid: string[][];
+  width: number;
+  height: number;
+  /** 允许的符号集合（如 ['A','B','C']） */
+  symbols: string[];
+  /** 底色符号（默认 'A'）：候选/当前为底色的非 A 纹样分别计为新增/缺失 */
+  baseSymbol?: string;
+}
+
+export interface ProofResult {
+  /** 逐格差异（按视觉坐标排序：行 → 列） */
+  diffs: ProofDiff[];
+  /** 逐行汇总（按行号升序） */
+  rows: ProofRowSummary[];
+  /** 候选行解析问题（与 DecodeIssue 同构：针数错误/无法解析等） */
+  issues: DecodeIssue[];
+  totals: {
+    added: number;
+    missing: number;
+    replaced: number;
+    /** 可比较且无差异的行数 */
+    matchedRows: number;
+    /** 可比较但存在差异的行数 */
+    diffRows: number;
+    /** 不可比较的行数 */
+    incomparableRows: number;
+  };
+}
+
 /**
  * 一段浮线：同一行内某种颜色相邻两次落针之间、被同色针脚两端夹住的区间。
  * 全部使用视觉坐标（1 基），与奇偶行编织方向无关。
